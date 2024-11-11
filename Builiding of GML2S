@@ -1,0 +1,112 @@
+library("xgboost")
+library("Matrix")
+set.seed(123)
+
+
+validation  = exGSE22138[c("CSTB","SH3BGRL3","LGALS1","TUBA1B","ACTB","FTL","S100A9"),]%>% t()%>% data.frame()
+validation = validation[rownames(meta_exGSE22138),]
+validation$group = meta_exGSE22138$class
+validation[validation$group == 1,"group"] = 0
+validation[validation$group == 2,"group"] = 1
+
+validation[,1:7] = decostand(validation[,1:7] , 'standardize') 
+
+
+validation2  = GSE84976[c("CSTB","SH3BGRL3","LGALS1","TUBA1B","ACTB","FTL","S100A9"),]%>% t()%>% data.frame()
+
+validation2 = validation2[rownames(meta_GSE84976),]
+validation2$group = meta_GSE84976$class
+
+validation2[validation2$group == 1,"group"] = 0
+validation2[validation2$group == 2,"group"] = 1
+
+validation2[,1:7] = decostand(validation2[,1:7] , 'standardize') 
+
+
+
+validation3  = GSE27831_log[c("CSTB","SH3BGRL3","LGALS1","TUBA1B","ACTB","FTL","S100A9"),]%>% t()%>% data.frame()
+
+validation3 = validation3[rownames(meta_GSE27831),]
+validation3$group = meta_GSE27831$class
+
+validation3[validation3$group == 1,"group"] = 0
+validation3[validation3$group == 2,"group"] = 1
+
+validation3[,1:7] = decostand(validation3[,1:7] , 'standardize') 
+
+auc_train = c()
+auc_v1 = c()
+auc_v2 = c()
+auc_v3 = c()
+index = c()
+p.value_v1 = c()
+p.value_v2 = c()
+p.value_v3 = c()
+p.value_train = c()
+
+for (depth in c(1:30)) {
+  for (eta in seq(0.05,1,0.05)) {
+
+    a = sample(c(TRUE,FALSE),nrow(filter(TCGA_sur,group == 0)),rep=TRUE,prob = c(0.6,0.4))
+    b = sample(c(TRUE,FALSE),nrow(filter(TCGA_sur,group == 1)),rep=TRUE,prob = c(0.6,0.4))
+    
+    train = rbind(filter(TCGA_sur,group == 0)[a,],filter(TCGA_sur,group == 1)[b,])
+    test = TCGA_sur[!(rownames(TCGA_sur)%in%rownames(train)),]
+    
+    train= TCG_exp2[rownames(train),]   
+    test = TCG_exp2[rownames(test),]
+    
+    train_matrix <- sparse.model.matrix(group ~ CSTB+SH3BGRL3+LGALS1+TUBA1B+ACTB+FTL+S100A9, data = train)
+    test_matrix <- sparse.model.matrix(group ~ CSTB+SH3BGRL3+LGALS1+TUBA1B+ACTB+FTL+S100A9, data = test)
+    train_label <- as.numeric(train$group)
+    test_label <-  as.numeric(test$group)
+    
+    train_fin <- list(data=train_matrix,label=train_label) 
+    test_fin <- list(data=test_matrix,label=test_label) 
+    dtrain <- xgb.DMatrix(data = train_fin$data, label = train_fin$label) 
+    dtest <- xgb.DMatrix(data = test_fin$data, label = test_fin$label)
+    
+    xgb <- xgboost(data = dtrain,max_depth= depth, eta= eta,                 # max_depth= 10, eta= 0.6,0.3
+                   objective='binary:logistic', nround= 1000)
+    
+    pre_xgb = round(predict(xgb,newdata = dtest))
+    auc_value = roc(test_label,as.numeric(pre_xgb))
+    auc_train = c(auc_train,auc_value$auc)
+    index = c(index,paste0(depth,eta))
+    
+    
+    ## v1 
+    validation_matrix <- sparse.model.matrix(group ~ CSTB+SH3BGRL3+LGALS1+TUBA1B+ACTB+FTL+S100A9, data = validation)
+    validation_label <-  as.numeric(validation$group)
+    validation_fin <- list(data=validation_matrix,label=validation_label) 
+    dvalidation <- xgb.DMatrix(data = validation_fin$data, label = validation_fin$label)
+    
+    pre_xgb = round(predict(xgb,newdata = dvalidation))
+    auc_value = roc(validation_label,as.numeric(pre_xgb))
+    auc_v1 = c(auc_v1,auc_value$auc)
+    
+    ## v2
+    validation_matrix <- sparse.model.matrix(group ~ CSTB+SH3BGRL3+LGALS1+TUBA1B+ACTB+FTL+S100A9, data = validation2)
+    validation_label <-  as.numeric(validation2$group)
+    validation_fin <- list(data=validation_matrix,label=validation_label) 
+    dvalidation <- xgb.DMatrix(data = validation_fin$data, label = validation_fin$label)
+    
+    pre_xgb = round(predict(xgb,newdata = dvalidation))
+    auc_value = roc(validation_label,as.numeric(pre_xgb))
+    auc_v2 = c(auc_v2,auc_value$auc)
+    
+    ## v3
+    validation_matrix <- sparse.model.matrix(group ~ CSTB+SH3BGRL3+LGALS1+TUBA1B+ACTB+FTL+S100A9, data = validation3)
+    validation_label <-  as.numeric(validation3$group)
+    
+    validation_fin <- list(data=validation_matrix,label=validation_label) 
+    dvalidation <- xgb.DMatrix(data = validation_fin$data, label = validation_fin$label)
+
+    pre_xgb = round(predict(xgb,newdata = dvalidation))
+    auc_value = roc(validation_label,as.numeric(pre_xgb))
+    auc_v3 = c(auc_v3,auc_value$auc)
+    
+  }
+  
+}
+
